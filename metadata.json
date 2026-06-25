@@ -1,0 +1,6 @@
+{
+  "name": "Upload Toolkit By RyanLee QX",
+  "description": "An offline-first Android toolkit for preparing videos, inspecting specs, applying patches, copying caption credit, and following the manual TikTok upload checklist by RyanLee QX.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
