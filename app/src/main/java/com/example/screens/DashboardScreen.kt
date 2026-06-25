@@ -48,6 +48,7 @@ import com.example.R
 import com.example.ui.theme.*
 import com.example.utils.AppLanguage
 import com.example.utils.LanguageManager
+import com.example.utils.TikTokUploadHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,6 +85,16 @@ fun DashboardScreen(viewModel: MainViewModel) {
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         viewModel.selectVideo(uri)
+    }
+
+    fun handleQxChromeUpload() {
+        val result = TikTokUploadHelper.openChromeCustomTabUpload(context)
+        if (result.first) {
+            viewModel.setTikTokOpened(true)
+            Toast.makeText(context, "QX Chrome Upload launched: ${result.second}. When TikTok Studio opens, select your prepared video from Gallery.", Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(context, "Failed to launch browser: ${result.second}", Toast.LENGTH_LONG).show()
+        }
     }
 
     fun handleTikTokUploadApp() {
@@ -553,10 +564,7 @@ fun DashboardScreen(viewModel: MainViewModel) {
                             }
 
                             Button(
-                                onClick = {
-                                    viewModel.setTikTokOpened(true)
-                                    viewModel.navigateTo("tiktok_upload")
-                                },
+                                onClick = { handleQxChromeUpload() },
                                 colors = ButtonDefaults.buttonColors(containerColor = CyberNavyLight),
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
@@ -1362,10 +1370,7 @@ fun DashboardScreen(viewModel: MainViewModel) {
                                              ) {
                                                  // 4. Open QX TikTok Studio Browser
                                                  Button(
-                                                     onClick = {
-                                                         viewModel.setTikTokOpened(true)
-                                                         viewModel.navigateTo("tiktok_upload")
-                                                     },
+                                                     onClick = { handleQxChromeUpload() },
                                                      colors = ButtonDefaults.buttonColors(containerColor = CyberNavyLight),
                                                      shape = RoundedCornerShape(8.dp),
                                                      border = BorderStroke(1.dp, CyberGlowCyan.copy(alpha = 0.4f)),
@@ -1505,10 +1510,7 @@ fun DashboardScreen(viewModel: MainViewModel) {
                                         ) {
                                             // 3. Open QX TikTok Studio Browser
                                             Button(
-                                                onClick = {
-                                                    viewModel.setTikTokOpened(true)
-                                                    viewModel.navigateTo("tiktok_upload")
-                                                },
+                                                onClick = { handleQxChromeUpload() },
                                                 colors = ButtonDefaults.buttonColors(containerColor = CyberGlowPurple),
                                                 shape = RoundedCornerShape(8.dp),
                                                 modifier = Modifier.weight(1.4f)
@@ -2148,10 +2150,7 @@ fun DashboardScreen(viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Button(
-                            onClick = {
-                                viewModel.setTikTokOpened(true)
-                                viewModel.navigateTo("tiktok_upload")
-                            },
+                            onClick = { handleQxChromeUpload() },
                             enabled = qxUploadMode,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (qxUploadMode) CyberGlowGreen else CyberNavyLight,

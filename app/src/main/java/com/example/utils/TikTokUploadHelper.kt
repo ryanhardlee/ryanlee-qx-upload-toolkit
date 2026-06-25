@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.os.Bundle
+import android.provider.Browser
 import android.util.Log
 import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsIntent
@@ -40,7 +42,15 @@ object TikTokUploadHelper {
                 .setShareState(CustomTabsIntent.SHARE_STATE_ON)
                 .build()
 
+            customTabsIntent.intent.setPackage("com.android.chrome")
             customTabsIntent.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+            // Force desktop mode simulation if supported by target browser
+            val headers = Bundle().apply {
+                putString("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+            }
+            customTabsIntent.intent.putExtra(Browser.EXTRA_HEADERS, headers)
+
             customTabsIntent.launchUrl(context, uri)
             Log.d(TAG, "Launched Chrome Custom Tab successfully for $TIKTOK_STUDIO_UPLOAD_URL")
             Pair(true, "Launched Chrome Custom Tab ($captionStatus)")
