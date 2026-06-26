@@ -97,6 +97,17 @@ fun DashboardScreen(viewModel: MainViewModel) {
         }
     }
 
+    fun handleQxExtensionBrowser() {
+        viewModel.setTikTokOpened(true)
+        Toast.makeText(
+            context,
+            "Confirm the RyanLee QX extension is installed and active inside the external extension-enabled browser before uploading.",
+            Toast.LENGTH_LONG
+        ).show()
+        val result = TikTokUploadHelper.openQxExtensionBrowser(context)
+        Toast.makeText(context, result.second, Toast.LENGTH_SHORT).show()
+    }
+
     fun handleTikTokUploadApp() {
         android.util.Log.d("DashboardScreen", "handleTikTokUploadApp called")
         coroutineScope.launch {

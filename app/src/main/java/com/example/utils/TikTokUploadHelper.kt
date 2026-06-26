@@ -69,4 +69,51 @@ object TikTokUploadHelper {
             }
         }
     }
+
+    private val EXTENSION_BROWSERS = listOf(
+        Pair("Lemur Browser", "com.lemurbrowser.exts"),
+        Pair("Kiwi Browser", "com.kiwibrowser.browser"),
+        Pair("Yandex Browser", "com.yandex.browser")
+    )
+
+    /**
+     * Attempts to open TikTok Studio upload URL in extension-capable Android browsers
+     * (Lemur, Kiwi, Yandex). Falls back to normal browser chooser if none are installed.
+     */
+    fun openQxExtensionBrowser(context: Context): Pair<Boolean, String> {
+        val uri = Uri.parse(TIKTOK_STUDIO_UPLOAD_URL)
+        val pm = context.packageManager
+
+        for ((name, pkg) in EXTENSION_BROWSERS) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                    setPackage(pkg)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (intent.resolveActivity(pm) != null) {
+                    context.startActivity(intent)
+                    Log.d(TAG, "Launched $name ($pkg) for $TIKTOK_STUDIO_UPLOAD_URL")
+                    return Pair(true, "Opened in $name")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to launch $name ($pkg)", e)
+            }
+        }
+
+        // Fallback: normal browser chooser
+        return try {
+            val chooserIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val chooser = Intent.createChooser(chooserIntent, "Open TikTok Studio Upload").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+            Log.d(TAG, "Launched standard browser chooser fallback")
+            Pair(true, "Opened in Browser chooser")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch browser chooser", e)
+            Pair(false, "No web browser available: ${e.message}")
+        }
+    }
 }
