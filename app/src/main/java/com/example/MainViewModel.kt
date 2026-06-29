@@ -112,6 +112,86 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _gallerySaveResult.value = result
     }
 
+    private fun isValidPreparedVideoUri(uri: Uri): Boolean {
+        if (!uri.scheme.equals("content", ignoreCase = true)) return false
+
+        return try {
+            val resolver = getApplication<Application>().contentResolver
+            val mimeType = resolver.getType(uri)
+            if (mimeType != null && !mimeType.startsWith("video/")) return false
+            resolver.openInputStream(uri)?.use { it.read() != -1 } == true
+        } catch (e: Exception) {
+            Log.w(TAG, "Prepared upload URI validation failed", e)
+            false
+        }
+    }
+
+    suspend fun prepareWebUploadUri(): com.example.utils.MediaStoreExportService.ExportResult =
+        withContext(Dispatchers.IO) {
+            val existing = _gallerySaveResult.value
+            val existingUri = existing?.savedUri
+            if (existing?.success == true &&
+                existing.verificationResult == "PASS" &&
+                existingUri != null &&
+                isValidPreparedVideoUri(existingUri)
+            ) {
+                Log.d(TAG, "Reusing verified MediaStore URI for WebView upload")
+                return@withContext existing
+            }
+
+            val file = _lastExportedFile.value
+            if (file == null || !file.exists() || file.length() <= 0L) {
+                val failure = com.example.utils.MediaStoreExportService.ExportResult(
+                    success = false,
+                    errorType = "PreparedVideoUnavailable",
+                    errorMessage = "No valid prepared video is available. Patch the video first.",
+                    sourcePath = file?.absolutePath.orEmpty(),
+                    sourceExists = file?.exists() == true,
+                    sourceSize = file?.length() ?: 0L
+                )
+                _gallerySaveResult.value = failure
+                Log.w(TAG, failure.errorMessage ?: "Prepared video unavailable")
+                return@withContext failure
+            }
+
+            val isFpsOutput = file.name.contains("FPS", ignoreCase = true)
+            val result = com.example.utils.MediaStoreExportService.saveVideoToGallery(
+                context = getApplication(),
+                cacheFile = file,
+                prefix = if (isFpsOutput) "QX_FPS" else "QX_PREP",
+                modeSuffix = _patchMode.value.replace(" ", "_")
+            )
+
+            val savedUri = result.savedUri
+            val verifiedResult = if (
+                result.success &&
+                result.verificationResult == "PASS" &&
+                savedUri != null &&
+                isValidPreparedVideoUri(savedUri)
+            ) {
+                result
+            } else {
+                result.copy(
+                    success = false,
+                    errorType = result.errorType ?: "PreparedUriValidationFailed",
+                    errorMessage = result.errorMessage
+                        ?: "The saved video URI could not be verified for WebView upload.",
+                    verificationResult = "FAIL"
+                )
+            }
+
+            _gallerySaveResult.value = verifiedResult
+            if (verifiedResult.success) {
+                Log.d(
+                    TAG,
+                    "Prepared WebView upload URI verified: ${verifiedResult.savedDisplayName}"
+                )
+            } else {
+                Log.e(TAG, "Could not prepare WebView upload URI: ${verifiedResult.errorMessage}")
+            }
+            verifiedResult
+        }
+
     // Honest Patch Verification State for Issue 3
     private val _patchVerificationData = MutableStateFlow<Map<String, String>?>(null)
     val patchVerificationData: StateFlow<Map<String, String>?> = _patchVerificationData.asStateFlow()

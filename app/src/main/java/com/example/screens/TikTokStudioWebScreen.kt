@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -49,6 +50,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.MainViewModel
 import com.example.ui.theme.*
 import com.example.utils.LanguageManager
+import com.example.utils.TikTokUploadHelper
+import com.example.utils.TikTokWebPolicy
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +87,61 @@ fun TikTokStudioWebScreen(
     var cookieFlushResult by remember { mutableStateOf("NOT_FLUSHED") }
     var webViewPackageVersion by remember { mutableStateOf("Unknown") }
 
+    fun isReadablePreparedVideoUri(uri: Uri): Boolean {
+        if (!uri.scheme.equals("content", ignoreCase = true)) return false
+        return try {
+            val mimeType = context.contentResolver.getType(uri)
+            if (mimeType != null && !mimeType.startsWith("video/")) return false
+            context.contentResolver.openInputStream(uri)?.use { it.read() != -1 } == true
+        } catch (e: Exception) {
+            lastWebError = "Prepared URI validation failed: ${e.message}"
+            Log.e("TikTokBrowser", "Prepared URI validation failed", e)
+            false
+        }
+    }
+
+    fun cancelPendingFileChooser(reason: String) {
+        uploadFileCallback?.onReceiveValue(null)
+        uploadFileCallback = null
+        Log.d("TikTokBrowser", "Pending file chooser cancelled: $reason")
+    }
+
+    fun openExternalUrl(url: String): Boolean {
+        return try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            true
+        } catch (e: Exception) {
+            lastWebError = "Cannot open external URL: ${e.message}"
+            Log.e("TikTokBrowser", "Cannot open external URL: $url", e)
+            false
+        }
+    }
+
+    fun injectReadinessObservation(view: WebView, url: String) {
+        if (!TikTokWebPolicy.isAllowedUploadUrl(url)) return
+
+        val observationScript = """
+            (() => {
+              const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+              const videoInputs = inputs.filter((input) => {
+                const accept = String(input.getAttribute('accept') || '').toLowerCase();
+                return accept.includes('video') || accept.includes('.mp4');
+              });
+              return JSON.stringify({
+                phase: 'phase1',
+                uploadPageReady: videoInputs.length > 0,
+                fileInputCount: inputs.length,
+                videoInputCount: videoInputs.length
+              });
+            })();
+        """.trimIndent()
+
+        view.evaluateJavascript(observationScript) { result ->
+            lastNavigationEvent = "Phase 1 readiness: $result"
+            Log.d("TikTokBrowser", "Phase 1 readiness observation: $result")
+        }
+    }
+
     LaunchedEffect(Unit) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             try {
@@ -107,6 +165,22 @@ fun TikTokStudioWebScreen(
             callback.onReceiveValue(results)
             uploadFileCallback = null
             lastNavigationEvent = "File chooser closed. Selected: ${results?.size ?: 0} files"
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            cancelPendingFileChooser("TikTok WebView disposed")
+            webView?.apply {
+                stopLoading()
+                webChromeClient = null
+                webViewClient = WebViewClient()
+                loadUrl("about:blank")
+                clearHistory()
+                removeAllViews()
+                destroy()
+            }
+            Log.d("TikTokBrowser", "TikTok WebView disposed")
         }
     }
 
@@ -303,12 +377,13 @@ fun TikTokStudioWebScreen(
                     // Open externally fallback
                     IconButton(
                         onClick = {
-                            try {
-                                viewModel.setTikTokOpened(true)
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(currentUrl))
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Cannot open external browser", Toast.LENGTH_SHORT).show()
+                            viewModel.setTikTokOpened(true)
+                            val extensionFallback = TikTokUploadHelper.openQxExtensionBrowser(context)
+                            if (!extensionFallback.first) {
+                                val chromeFallback = TikTokUploadHelper.openChromeCustomTabUpload(context)
+                                Toast.makeText(context, chromeFallback.second, Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, extensionFallback.second, Toast.LENGTH_SHORT).show()
                             }
                         },
                         colors = IconButtonDefaults.iconButtonColors(contentColor = CyberGlowCyan),
@@ -431,23 +506,32 @@ fun TikTokStudioWebScreen(
                                 ViewGroup.LayoutParams.MATCH_PARENT
                             )
                             webViewClient = object : WebViewClient() {
-                                override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                                    url?.let {
-                                        lastRedirectUrl = it
-                                        currentUrl = it
-                                        lastNavigationEvent = "shouldOverrideUrlLoading (Redirect): $it"
-                                        if (it.startsWith("http://") || it.startsWith("https://")) {
-                                            return false
-                                        }
-                                        try {
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(it))
-                                            ctx.startActivity(intent)
-                                            return true
-                                        } catch (e: Exception) {
-                                            return true
-                                        }
+                                private fun handleNavigation(url: String?): Boolean {
+                                    if (url.isNullOrBlank()) return false
+                                    lastRedirectUrl = url
+                                    currentUrl = url
+                                    lastNavigationEvent = "Navigation requested: $url"
+
+                                    if (TikTokWebPolicy.isTrustedTikTokOrigin(url)) {
+                                        return false
                                     }
-                                    return false
+
+                                    Log.w("TikTokBrowser", "Routing non-TikTok URL externally: $url")
+                                    if (!openExternalUrl(url)) {
+                                        Toast.makeText(ctx, "Blocked unsupported browser URL", Toast.LENGTH_SHORT).show()
+                                    }
+                                    return true
+                                }
+
+                                override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                                    return handleNavigation(url)
+                                }
+
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: WebResourceRequest?
+                                ): Boolean {
+                                    return handleNavigation(request?.url?.toString())
                                 }
 
                                 override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -481,6 +565,9 @@ fun TikTokStudioWebScreen(
                                     } catch (e: Exception) {
                                         cookieFlushResult = "FAIL: ${e.message}"
                                     }
+                                    if (view != null && url != null) {
+                                        injectReadinessObservation(view, url)
+                                    }
                                 }
 
                                 override fun onReceivedError(
@@ -506,9 +593,48 @@ fun TikTokStudioWebScreen(
                                     filePathCallback: ValueCallback<Array<Uri>>,
                                     fileChooserParams: FileChooserParams
                                 ): Boolean {
-                                    uploadFileCallback = filePathCallback
+                                    cancelPendingFileChooser("A new chooser request replaced the previous request")
                                     fileChooserEventCount++
                                     lastNavigationEvent = "onShowFileChooser (Video upload triggered)"
+
+                                    val acceptsVideo = TikTokWebPolicy.acceptsVideo(fileChooserParams.acceptTypes)
+                                    val isAllowedUploadPage = TikTokWebPolicy.isAllowedUploadUrl(currentUrl)
+                                    val saveResult = viewModel.gallerySaveResult.value
+                                    val preparedUri = saveResult?.savedUri
+                                    val canUsePreparedUri =
+                                        acceptsVideo &&
+                                            isAllowedUploadPage &&
+                                            saveResult?.success == true &&
+                                            saveResult.verificationResult == "PASS" &&
+                                            preparedUri != null &&
+                                            isReadablePreparedVideoUri(preparedUri)
+
+                                    if (canUsePreparedUri) {
+                                        filePathCallback.onReceiveValue(arrayOf(preparedUri!!))
+                                        lastNavigationEvent =
+                                            "Prepared QX video handed to TikTok Web: " +
+                                                (saveResult?.savedDisplayName ?: saveResult?.filename ?: "video/mp4")
+                                        Log.i(
+                                            "TikTokBrowser",
+                                            "Returned verified prepared video URI to TikTok file chooser"
+                                        )
+                                        Toast.makeText(
+                                            context,
+                                            "Prepared QX video selected for TikTok Web",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        return true
+                                    }
+
+                                    uploadFileCallback = filePathCallback
+                                    Log.w(
+                                        "TikTokBrowser",
+                                        "Using manual picker. acceptsVideo=$acceptsVideo, " +
+                                            "allowedUploadPage=$isAllowedUploadPage, " +
+                                            "preparedUriAvailable=${preparedUri != null}"
+                                    )
+                                    lastNavigationEvent =
+                                        "Prepared URI unavailable or request not eligible; opening manual picker"
                                     try {
                                         val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
                                             type = "video/*"
@@ -534,25 +660,51 @@ fun TikTokStudioWebScreen(
                                 ): Boolean {
                                     popupEventCount++
                                     lastNavigationEvent = "onCreateWindow (Popup requested)"
-                                    
-                                    val tempWebView = WebView(ctx).apply {
+
+                                    val parentWebView = view
+                                    lateinit var tempWebView: WebView
+                                    tempWebView = WebView(ctx).apply {
                                         webViewClient = object : WebViewClient() {
-                                            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                                                url?.let {
-                                                    currentUrl = it
-                                                    webView?.loadUrl(it)
+                                            private fun routePopup(url: String?): Boolean {
+                                                if (url.isNullOrBlank() || url == "about:blank") return false
+                                                if (TikTokWebPolicy.isTrustedTikTokOrigin(url)) {
+                                                    currentUrl = url
+                                                    parentWebView?.loadUrl(url)
+                                                } else {
+                                                    openExternalUrl(url)
                                                 }
+                                                tempWebView.stopLoading()
+                                                tempWebView.destroy()
                                                 return true
                                             }
+
+                                            override fun onPageStarted(
+                                                view: WebView?,
+                                                url: String?,
+                                                favicon: android.graphics.Bitmap?
+                                            ) {
+                                                routePopup(url)
+                                            }
+
+                                            override fun shouldOverrideUrlLoading(
+                                                view: WebView?,
+                                                url: String?
+                                            ): Boolean = routePopup(url)
+
+                                            override fun shouldOverrideUrlLoading(
+                                                view: WebView?,
+                                                request: WebResourceRequest?
+                                            ): Boolean = routePopup(request?.url?.toString())
                                         }
                                     }
-                                    
+
                                     val transport = resultMsg?.obj as? WebView.WebViewTransport
                                     if (transport != null) {
                                         transport.webView = tempWebView
                                         resultMsg.sendToTarget()
                                         return true
                                     }
+                                    tempWebView.destroy()
                                     return false
                                 }
                             }
@@ -562,14 +714,14 @@ fun TikTokStudioWebScreen(
                                 javaScriptEnabled = true
                                 domStorageEnabled = true
                                 databaseEnabled = true
-                                allowFileAccess = true
+                                allowFileAccess = false
                                 allowContentAccess = true
                                 mediaPlaybackRequiresUserGesture = false
                                 cacheMode = WebSettings.LOAD_DEFAULT
                                 setSupportMultipleWindows(true)
                                 setJavaScriptCanOpenWindowsAutomatically(true)
                                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                                    mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                                 }
                             }
 
