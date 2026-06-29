@@ -169,9 +169,9 @@ fun TikTokStudioWebScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "QX WEBVIEW BROWSER EXPERIMENTAL",
-                                color = CyberText,
-                                fontSize = 11.sp,
+                                text = "Experimental WebView — QX extension/runtime is not active.",
+                                color = CyberGlowRed,
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.Black,
                                 fontFamily = FontFamily.Monospace
                             )
@@ -407,7 +407,7 @@ fun TikTokStudioWebScreen(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = "TikTok login may not complete inside Android WebView. Use QX Chrome Upload or Upload to TikTok App for reliable upload.",
+                        text = "Android WebView cannot load the RyanLee QX browser extension. Use QX Extension Browser / future QX Browser for the full method.",
                         color = CyberText,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
